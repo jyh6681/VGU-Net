@@ -5,9 +5,6 @@ import umap
 import matplotlib.pyplot as plt
 from torch import nn
 import torch.nn.functional as F
-import basicblock as B
-BatchNorm2d = nn.BatchNorm2d
-BatchNorm1d = nn.BatchNorm1d
 
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
@@ -40,12 +37,12 @@ class SpatialGCN(nn.Module):
         self.node_q = nn.Conv2d(plane, inter_plane, kernel_size=1)
         self.node_v = nn.Conv2d(plane, inter_plane, kernel_size=1)
         self.conv_wgl = nn.Linear(inter_plane,out_plane)
-        self.bn1 = BatchNorm1d(out_plane)
+        self.bn1 = nn.BatchNorm1d(out_plane)
         self.conv_wgl2 = nn.Linear(out_plane, out_plane)
-        self.bn2 = BatchNorm1d(out_plane)
+        self.bn2 = nn.BatchNorm1d(out_plane)
         self.softmax = nn.Softmax(dim=2)
 
-    def forward(self, x, test_mode=False):
+    def forward(self, x):
         node_k = self.node_k(
             x)  # x#copy.deepcopy(x)#F.normalize(x,p=1,dim=-1)   #####nosym better, softmax better,only one gcn better
         node_q = self.node_q(x)  # x#copy.deepcopy(x)#F.normalize(x,p=1,dim=-1)#
@@ -57,26 +54,26 @@ class SpatialGCN(nn.Module):
         node_v = node_v.view(b, c, -1).permute(0, 2, 1)  ##b N C
         Adj = torch.bmm(node_k, node_q)  ###Q*K^T
 
-        ####cosine=(a*b)/||a||*||b||
+        # test using cosine=(a*b)/||a||*||b|| to construct adjacency
         # Adj = torch.bmm(node_k,node_q)#ab_ij=node_i*node_j
         # batch_row_norm = torch.norm(node_k,dim=-1).unsqueeze(-1)
         # Adj = torch.div(Adj,torch.bmm(batch_row_norm,batch_row_norm.permute(0,2,1)))
 
         Adj = self.softmax(Adj)  ###adjacency matrix of size b N N
 
-        max = torch.max(Adj, dim=2)
-        min = torch.min(Adj, dim=2)
-        Adj = (Adj - min.values[:, :, None]) / max.values[:, :, None]  # normalized adjacency matrix
+        # max = torch.max(Adj, dim=2)
+        # min = torch.min(Adj, dim=2)
+        # Adj = (Adj - min.values[:, :, None]) / max.values[:, :, None]  # normalized adjacency matrix
         # Adj[Adj<0.5]=0
 
         AV = torch.bmm(Adj,node_v)###AX
         AVW = F.relu(self.bn1(self.conv_wgl(AV).transpose(1,2)).transpose(1,2))###AXW b n C
         AVW = F.dropout(AVW)
-        #####add one more layer
+        # add one more layer
         AV = torch.bmm(Adj,AVW)
         AVW = F.relu(self.bn2(self.conv_wgl2(AV).transpose(1,2)).transpose(1,2))
         AVW = F.dropout(AVW)
-        ##end
+        # end
         AVW = AVW.transpose(1, 2).contiguous()###AV withj shape NxC,N=mxn
         b,c,n = AVW.shape
         AVW = AVW.view(b, c, h, -1)
